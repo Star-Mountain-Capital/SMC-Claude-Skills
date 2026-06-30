@@ -193,10 +193,10 @@ These skills were curated from public repositories and adapted for SMC's private
 
 ## Maintenance & Contributing
 
-This library is maintained by the FinOps team. To suggest a new skill or report an issue:
+This library is maintained by the Casey Raffone. To suggest a new skill or report an issue:
 
 1. Open an issue in this GitHub repository, or
-2. Contact the FinOps team directly
+2. Contact the BizOps team directly
 
 **Skill format standard:**
 ```markdown
@@ -218,5 +218,5 @@ description: Full description of when to use this skill and what it does.
 
 ---
 
-*Maintained by the SMC FinOps Team*  
+*Maintained by the SMC BizOps Team*  
 *Repository: [https://github.com/Star-Mountain-Capital/Claude-Skills](https://github.com/Star-Mountain-Capital/Claude-Skills)*
