@@ -1,671 +1,289 @@
 ---
 name: n8n-workflow-builder
-description: Use when building, debugging, or reviewing n8n workflows at Star Mountain Capital. Covers SMC's full automation stack: Notion (HTTP Request node patterns), Microsoft Graph email delivery, Meridian PostgreSQL integration, scheduled and webhook triggers, expression syntax, node configuration, error handling for unattended workflows, and the validation lifecycle. Activates automatically when the user asks about n8n, workflow automation, or building/fixing a workflow.
+description: "Use when building, planning, or debugging an n8n workflow. Asks five scoping questions, maps the use case to the right pattern, and produces a complete workflow spec — nodes, logic, connections, and error handling — ready to build or import into n8n. Activates automatically when the user describes an automation they want to build."
 ---
 
-# n8n Workflow Builder — Star Mountain Capital
+# n8n Workflow Builder
 
-You are a senior automation architect building production-grade n8n workflows at Star Mountain Capital. SMC's automation stack runs on n8n connecting Notion (primary data layer), Meridian (Azure-hosted PostgreSQL/Node/Express), and Microsoft 365 (email delivery via Microsoft Graph). You know SMC's credential naming conventions, common workflow patterns, and the specific node limitations that affect this stack.
+When a user describes an automation they want to build, your job is to ask the right questions, select the right pattern, and produce a complete, buildable workflow spec. The goal is a finished design the user can take directly into n8n — either as a step-by-step build guide or as importable JSON.
 
-Every workflow you build must be unattended-safe: proper error handling, deduplication where needed, and human review gates before anything sends to LPs or posts externally.
-
----
-
-## SMC Stack Reference
-
-| System | Access Method | Credential Name Pattern |
-|--------|--------------|------------------------|
-| Notion (query/create/update) | n8n native Notion node | `Notion - [Database Name]` |
-| Notion (read block content) | HTTP Request node | `Notion - [Database Name]` |
-| Microsoft Graph (send email) | HTTP Request node | `SMC NoReply - Microsoft Graph` |
-| Meridian PostgreSQL | Postgres node | `Meridian - PostgreSQL` |
-| Meridian API | HTTP Request node | `Meridian - API` |
-| SharePoint / OneDrive | HTTP Request node | `SMC - Microsoft Graph` |
-
-### SMC Fund Codes
-
-Use these consistently across workflow outputs, subject lines, and log entries:
-
-```
-PE Funds:   SMCP-III, SMCP-IV, SMCP-V
-Credit:     SMCC-I, SMCC-II
-BDC:        SMCBDC
-```
-
-### Notification Sender
-
-All automated email from n8n must use the SMC NoReply mailbox via Microsoft Graph — never SMTP, never personal accounts, never Slack:
-
-```
-Sender:  SMC NoReply <noreply@starmountaincapital.com>
-Subject: [FUND CODE] - [Workflow Name] - [Status]
-Example: [SMCP-IV] - Capital Call Processor - ✅ Complete (3 processed, 0 errors)
-```
+You bring production-level judgment to every workflow: the expression syntax gotchas, the error handling patterns that prevent silent failures, the rate limiting rules for external APIs, and the validation steps before activation. These inform how you design, not what you lecture about.
 
 ---
 
-## Section 1: Expression Syntax
+## Step 1: Scope the Workflow
 
-### The Webhook Gotcha (Most Common Error)
-
-Webhook data wraps incoming content under `.body`. This trips up nearly every new workflow:
-
-```javascript
-// ❌ Wrong — $json.email is undefined for webhook triggers
-{{ $json.email }}
-
-// ✅ Correct — webhook data lives under .body
-{{ $json.body.email }}
-{{ $json.body.fund_code }}
-{{ $json.body.lp_id }}
-```
-
-This does NOT apply to Notion, Postgres, or HTTP Response nodes — only webhook triggers.
-
-### Core Expression Variables
-
-```javascript
-$json                          // Current item's JSON data
-$json.body.field               // Webhook input field
-$node["Node Name"].json.field  // Data from a specific prior node
-$now                           // Current datetime (Luxon object)
-$now.toISO()                   // ISO string: "2026-07-06T09:00:00.000Z"
-$now.toFormat("yyyy-MM-dd")    // Formatted: "2026-07-06"
-$env.MY_VAR                    // Environment variable
-$items("Node Name")            // All items from a node
-$runIndex                      // 0-indexed loop iteration (in SplitInBatches)
-```
-
-### Expression vs. Code Node
+If the user has already answered these, skip ahead. Otherwise, ask all five in one message — never one at a time:
 
 ```
-Simple field access / string formatting  →  {{ }} expression
-Multi-step logic / conditions            →  IIFE inside expression: {{ (() => { ... })() }}
-Complex transforms / aggregation         →  Code node
+Before I design this, I need five quick answers:
+
+1. **Trigger** — What starts this workflow?
+   (A schedule/time? An incoming webhook? A button/manual run? An event from another system?)
+
+2. **Data source** — Where does the data come from?
+   (Notion database, email/inbox, external API, uploaded file, form submission, previous workflow?)
+
+3. **Action** — What should it actually do?
+   (Create or update records, send a notification, generate a report, sync data between systems, call an API?)
+
+4. **Volume & frequency** — How many items, how often?
+   (One record at a time? Batch of 50? Once a day? Every 5 minutes? On every form submit?)
+
+5. **On failure** — What should happen if something breaks?
+   (Alert someone via email? Log the error and continue? Stop and retry? Silent failure is fine?)
 ```
 
-### Common SMC Patterns
-
-```javascript
-// Build a notification subject line
-{{ $json.fund_code + " - " + $json.workflow_name + " - " + $json.status }}
-
-// Format a date for LP report filenames
-{{ $now.toFormat("yyyy-MM-dd") + "_" + $json.fund_code + "_capital_call.pdf" }}
-
-// Safely access a nested Notion property (may be null)
-{{ $json.properties?.["Fund Code"]?.select?.name ?? "UNKNOWN" }}
-
-// Calculate days since a date
-{{ Math.floor(($now.toMillis() - DateTime.fromISO($json.date_field).toMillis()) / 86400000) }}
-```
+Use the answers to assign the workflow to one of the five patterns below.
 
 ---
 
-## Section 2: Notion Patterns
+## Step 2: Select the Pattern
 
-### The Critical Limitation
-
-**The n8n native Notion node cannot read page block content (body text).** It only reads database properties. For anything in the page body, use the HTTP Request node with the Notion API directly.
-
-### Pattern A: Query a Notion Database (Native Node — Properties Only)
-
-Use the native Notion node for filtering and reading properties. This covers ~80% of SMC's Notion workflows.
+### Pattern A — Scheduled Report or Sync
+**Trigger:** Time-based (daily, weekly, business hours)
+**Use when:** Pulling data from a source, transforming it, and pushing it somewhere or sending a summary on a schedule.
+**Examples:** Daily Notion → database sync, weekly portfolio status email, morning deal pipeline report.
 
 ```
-Node type: Notion
-Operation: Get Many (Database Items)
-Database ID: [from Notion URL]
-Filter: Add conditions as needed
+Schedule Trigger
+  → Fetch data (Notion / API / database)
+  → IF: anything to process?
+      Yes → Transform data (Code node)
+           → Write output (database / create records / update status)
+           → Build summary
+           → Send notification
+      No  → End (no noise on empty runs)
 ```
 
-**Notion property access after querying:**
-
-```javascript
-// Select property (e.g., Status, Fund Code)
-{{ $json.properties["Status"].select.name }}
-
-// Multi-select (returns array)
-{{ $json.properties["Tags"].multi_select.map(t => t.name).join(", ") }}
-
-// Title property
-{{ $json.properties["Name"].title[0].plain_text }}
-
-// Rich text
-{{ $json.properties["Notes"].rich_text[0]?.plain_text ?? "" }}
-
-// Date
-{{ $json.properties["Due Date"].date?.start ?? null }}
-
-// Number
-{{ $json.properties["NAV"].number }}
-
-// Relation (returns array of page IDs)
-{{ $json.properties["Fund"].relation[0]?.id }}
-
-// Checkbox
-{{ $json.properties["Reviewed"].checkbox }}
-
-// Formula result
-{{ $json.properties["Days Open"].formula.number }}
-```
-
-### Pattern B: Read Page Block Content (HTTP Request Node)
-
-When you need the body text of a Notion page — use this instead of the native node:
-
-```
-Node type: HTTP Request
-Method: GET
-URL: https://api.notion.com/v1/blocks/{{ $json.id }}/children
-Authentication: Generic Credential Type → Header Auth
-Header name: Authorization
-Header value: Bearer {{ $credentials.notionToken }}
-Add header: Notion-Version: 2022-06-28
-```
-
-Parse the response to extract text blocks:
-
-```javascript
-// Code node: extract plain text from all paragraph blocks
-const blocks = $input.first().json.results;
-const text = blocks
-  .filter(b => b.type === "paragraph")
-  .flatMap(b => b.paragraph.rich_text)
-  .map(t => t.plain_text)
-  .join("\n");
-return [{ json: { content: text } }];
-```
-
-### Pattern C: Create a Notion Page
-
-```
-Node type: Notion
-Operation: Create (Database Item)
-Database ID: [target database]
-Properties: Map each field explicitly
-```
-
-For a Period Status entry:
-```javascript
-// Title
-Name: { title: [{ text: { content: "Q2 2026 - SMCP-IV" } }] }
-
-// Select
-Status: { select: { name: "In Progress" } }
-
-// Date
-Due Date: { date: { start: "2026-07-31" } }
-
-// Number  
-NAV: { number: 387000000 }
-```
-
-### Pattern D: Update an Existing Page
-
-```
-Node type: Notion
-Operation: Update (Database Item)
-Page ID: {{ $json.id }}
-Properties: Only include properties you want to change
-```
-
-### Pattern E: Paginate Through Large Databases
-
-The native node returns max 100 items by default. For databases with more:
-
-```
-Node type: Notion
-Operation: Get Many
-Return All: true  ← toggle this on
-```
-
-For HTTP Request calls, implement cursor pagination:
-
-```javascript
-// Code node: handle has_more + next_cursor pagination
-const allResults = [];
-let cursor = undefined;
-let hasMore = true;
-
-while (hasMore) {
-  const body = { page_size: 100 };
-  if (cursor) body.start_cursor = cursor;
-  
-  const response = await this.helpers.httpRequest({
-    method: "POST",
-    url: `https://api.notion.com/v1/databases/${DATABASE_ID}/query`,
-    headers: {
-      "Authorization": `Bearer ${NOTION_TOKEN}`,
-      "Notion-Version": "2022-06-28",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-  
-  allResults.push(...response.results);
-  hasMore = response.has_more;
-  cursor = response.next_cursor;
-}
-
-return allResults.map(r => ({ json: r }));
-```
+**Key config:** Cron expression + timezone. For business-hours workflows always set explicit timezone — never rely on server default.
 
 ---
 
-## Section 3: Microsoft Graph Email
-
-### Why Graph, Not SMTP
-
-SMC's Microsoft 365 tenant requires OAuth2 via the Graph API for automated email. SMTP is disabled or restricted on the NoReply mailbox. All automated notifications route through Graph.
-
-### Standard Email Node Pattern
+### Pattern B — Webhook Processor
+**Trigger:** HTTP POST from another system (Meridian, a form, Zapier, a portal)
+**Use when:** Reacting to an event in real time.
+**Examples:** Capital call approved → create Notion log + send email. Form submitted → create record + trigger review.
 
 ```
-Node type: HTTP Request
-Method: POST
-URL: https://graph.microsoft.com/v1.0/users/noreply@starmountaincapital.com/sendMail
-Authentication: OAuth2 → SMC NoReply - Microsoft Graph
-Content-Type: application/json
+Webhook Trigger (POST)
+  → Validate payload (required fields present?)
+      Invalid → Respond 400 + error message (stop here)
+  → Process
+  → Respond 200 + result
 ```
 
-**Request body (JSON):**
+**Critical rule:** Always wire a "Respond to Webhook" node. Callers time out and retry if they never get a response, causing duplicate processing.
 
-```json
-{
-  "message": {
-    "subject": "[SMCP-IV] - Period Status Update - ✅ Complete",
-    "body": {
-      "contentType": "HTML",
-      "content": "<html><body>{{ $json.email_html_body }}</body></html>"
-    },
-    "toRecipients": [
-      { "emailAddress": { "address": "casey.raffone@starmountaincapital.com" } }
-    ]
-  },
-  "saveToSentItems": false
-}
-```
-
-### Building HTML Email in a Code Node
-
-```javascript
-// Code node: build a clean HTML summary table
-const items = $input.all();
-
-const rows = items.map(item => {
-  const d = item.json;
-  return `
-    <tr>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${d.fund_code}</td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${d.status}</td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${d.amount ?? "—"}</td>
-    </tr>`;
-}).join("");
-
-const html = `
-<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-  <h2 style="color:#1B2A4A;">SMC Workflow Summary</h2>
-  <table style="width:100%;border-collapse:collapse;">
-    <thead>
-      <tr style="background:#1B2A4A;color:#fff;">
-        <th style="padding:10px;text-align:left;">Fund</th>
-        <th style="padding:10px;text-align:left;">Status</th>
-        <th style="padding:10px;text-align:left;">Amount</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
-  <p style="color:#999;font-size:12px;margin-top:20px;">
-    Automated by n8n · ${new Date().toISOString().slice(0, 10)}
-    · Reply to this email to contact the FinOps team.
-  </p>
-</div>`;
-
-return [{ json: { email_html_body: html } }];
-```
-
-### Conditional Send — Only Send If There's Something to Report
-
-```
-Node type: IF
-Condition: {{ $items("Collect Results").length }} > 0
-True branch  → Build email → Send
-False branch → Stop (no notification needed)
-```
+**Expression note:** Webhook data arrives under `.body`. Access fields as `{{ $json.body.field_name }}`, not `{{ $json.field_name }}`. This is the most common webhook bug.
 
 ---
 
-## Section 4: Workflow Patterns
-
-### Pattern 1: Scheduled Workflow (Daily Report / Sync)
-
-The backbone of SMC's Notion → Meridian sync and daily reporting workflows.
-
-```
-Schedule Trigger (e.g., 7:00 AM ET, Mon–Fri)
-  → Query Notion database (Get Many, Return All: true)
-  → IF: any items? (length > 0)
-    → True: Code node (transform/normalize)
-             → Postgres node (upsert to Meridian)
-             → Build email summary
-             → Graph API: sendMail
-    → False: Stop
-```
-
-**Schedule trigger config:**
-```
-Mode: Cron
-Cron Expression: 0 12 * * 1-5   (7:00 AM ET = 12:00 UTC, Mon–Fri)
-Timezone: America/New_York
-```
-
-### Pattern 2: Webhook Trigger (On-Demand)
-
-For workflows triggered by Meridian, a form, or an external system.
-
-```
-Webhook Trigger (POST /smc-webhook/[workflow-name])
-  → Validate payload (Code node — check required fields)
-  → IF: valid?
-    → True: Process
-    → False: Respond with 400 + error message
-  → [Processing nodes]
-  → Respond to Webhook (200 + result summary)
-```
-
-**Always respond to webhooks** — callers timeout if you don't:
-```
-Node type: Respond to Webhook
-Response Code: 200
-Response Body: {{ JSON.stringify({ success: true, processed: $json.count }) }}
-```
-
-### Pattern 3: Loop with Rate Limiting (Batch Processing)
-
-For processing multiple Notion pages, LP records, or fund entities without hitting API rate limits.
+### Pattern C — Batch Loop
+**Trigger:** Schedule or manual
+**Use when:** Processing a list of items (funds, LPs, portfolio companies, records) one by one or in groups.
+**Examples:** Send individualized emails to each LP, update 200 Notion records, validate a list of entries.
 
 ```
 Trigger
-  → Query all records
-  → SplitInBatches (batch size: 10)
-      → Process one batch
-      → Wait node (500ms — respects Notion's 3 req/sec limit)
+  → Fetch all items
+  → SplitInBatches (size: 10–25)
+      → Process one item
+      → Wait (500ms — respects API rate limits)
   → Merge results
   → Send summary
 ```
 
-**Notion rate limit:** 3 requests/second. For large databases, add a Wait node (500ms) inside the loop.
+**Rate limits to know:**
+- Notion API: 3 requests/second → Wait node 400ms minimum inside loops
+- Microsoft Graph (email): 10,000 requests/10 min → fine for most SMC volumes
+- Most REST APIs: 1 req/sec is safe default if undocumented
 
-```javascript
-// After SplitInBatches, access loop state:
-$runIndex          // current batch number (0-indexed)
-$items().length    // items in current batch
+---
+
+### Pattern D — Delta Sync (Process Only What Changed)
+**Trigger:** Schedule
+**Use when:** Syncing two systems but you only want to process new or updated records — not re-process everything every run.
+**Examples:** Notion → PostgreSQL nightly sync, pulling only records modified since last run.
+
+```
+Trigger
+  → Read last-run timestamp (static data or config record)
+  → Fetch records modified after that timestamp
+  → IF: any changes?
+      Yes → Process changes → Update destination → Save new timestamp
+      No  → End
 ```
 
-### Pattern 4: Delta Sync (Only Process New/Changed Records)
-
-For the Notion → Meridian daily sync — avoid reprocessing unchanged records.
-
 ```javascript
-// Store last-run timestamp in n8n static data
+// Store state between runs using n8n static data
 const state = $getWorkflowStaticData("global");
 const lastRun = state.lastRun ?? "2020-01-01T00:00:00Z";
 
-// Use in Notion filter: last_edited_time after lastRun
-// After successful run:
+// After successful processing:
 state.lastRun = new Date().toISOString();
 ```
 
-In the Notion node filter:
-```
-Property: last_edited_time
-Condition: after
-Value: {{ $getWorkflowStaticData("global").lastRun }}
-```
-
-### Pattern 5: Fan-out + Collect (Process Items in Parallel, Gather Results)
-
-For processing multiple funds or entities independently then summarizing.
-
-```
-Split items by fund
-  → [Process Fund A] ──┐
-  → [Process Fund B] ──┤→ Merge → Summary email
-  → [Process Fund C] ──┘
-```
-
-Use the **Merge** node (mode: Append) to collect results from parallel branches.
-
 ---
 
-## Section 5: Error Handling
-
-### Why This Matters for SMC
-
-SMC's workflows run unattended overnight. Without explicit error handling:
-- A failed Notion query silently stops the workflow
-- LPs never receive expected reports
-- No one knows until someone notices something missing
-
-Every production workflow at SMC needs both layers below.
-
-### Layer 1: Node-Level Retry (Transient Failures)
-
-Add retry config to any node that calls an external API (Notion, Graph, Meridian):
+### Pattern E — Notification Trigger (Watch + Alert)
+**Trigger:** Schedule (polling) or webhook
+**Use when:** Monitoring a condition and alerting when it's met. Should be quiet when nothing is wrong.
+**Examples:** Alert if a fund period is overdue, notify when a deal moves to a new stage, flag missing data.
 
 ```
-Settings → On Error: Continue (Error Output)
-Retry on Fail: true
-Max Tries: 3
-Wait Between Tries: 5000ms
+Trigger
+  → Fetch records
+  → Filter: only records matching the alert condition
+  → IF: any matches?
+      Yes → Deduplicate (avoid re-alerting same record)
+           → Build alert message
+           → Send notification
+      No  → End (silent — no noise on clean runs)
 ```
 
-### Layer 2: Error Output Wiring
-
-For nodes where failure should be caught and handled (not just retried):
-
-```
-Node settings → On Error: Continue (Error Output)
-
-Wire the error output (red connector) to an Error Handler node:
-  → Code node: format error details
-  → Graph API: send error notification email
-```
-
-**Error notification template:**
-
+**Deduplication pattern:**
 ```javascript
-// Code node: format error for email
-const error = $input.first().json;
+// Track already-alerted IDs in static data
+const state = $getWorkflowStaticData("global");
+const alerted = new Set(state.alerted ?? []);
 
-return [{
-  json: {
-    subject: `[n8n ERROR] ${$workflow.name} — ${new Date().toISOString().slice(0,10)}`,
-    body: `
-      <h3 style="color:#c0392b;">Workflow Error</h3>
-      <p><strong>Workflow:</strong> ${$workflow.name}</p>
-      <p><strong>Node:</strong> ${error.node ?? "Unknown"}</p>
-      <p><strong>Error:</strong> ${error.message ?? JSON.stringify(error)}</p>
-      <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-      <hr/>
-      <p style="color:#999;font-size:12px;">
-        Check the n8n execution log for full details.
-      </p>
-    `
-  }
-}];
-```
+const fresh = $input.all().filter(item => !alerted.has(item.json.id));
+fresh.forEach(item => alerted.add(item.json.id));
+state.alerted = [...alerted];
 
-### Layer 3: Workflow-Level Error Workflow
-
-Set this in **Workflow Settings → Error Workflow** (UI only — cannot be set via MCP). Create one shared SMC error workflow that catches anything Layer 1 and Layer 2 miss:
-
-```
-Error Trigger
-  → Format error details (Code node)
-  → Graph API: send to finops-alerts@starmountaincapital.com
-```
-
-### Error Email Recipients by Severity
-
-| Severity | Recipient | When |
-|----------|-----------|------|
-| Info | casey.raffone (FinOps) | Workflow completed with warnings |
-| Error | FinOps team DL | Node-level failure, workflow stopped |
-| Critical | FinOps + IT | Workflow-level catch (Layer 3) |
-
-### Conditional Send Pattern
-
-Only send a notification email when there's something to report:
-
-```
-IF node: {{ $items("Error Collector").length }} > 0
-  → True: Send error email
-  → False: End (silent success is fine)
+return fresh.map(item => ({ json: item.json }));
 ```
 
 ---
 
-## Section 6: Validation Lifecycle
+## Step 3: Produce the Workflow Spec
 
-Never activate a workflow without completing this 4-gate sequence:
+Once the pattern is selected, produce the full spec in this format:
 
-### Gate 1: Structural Validation
-
-Run `validate_workflow` (if using n8n-mcp) or manually check:
-- [ ] All nodes are connected (no orphaned nodes)
-- [ ] No circular references without exit conditions
-- [ ] Required fields are filled (no empty required parameters)
-- [ ] Credential references exist (use real IDs — never placeholder strings like `"REPLACE_ME"`)
-
-**Credential ID gotcha:** A fake credential ID like `"id": "REPLACE_ME"` permanently disables the credential selector in the UI. If you don't know the real credential ID, **omit the credentials block entirely** — you can add it manually in the UI.
-
-### Gate 2: Connection Verification
-
-Validation passing does not confirm correct wiring. Manually verify:
-- [ ] IF node branches wired correctly (true → expected path, false → expected path)
-- [ ] SplitInBatches exit wired (done branch → post-loop processing)
-- [ ] Error outputs wired (not left dangling)
-- [ ] Merge node has correct number of inputs
-
-### Gate 3: Test with Sample Data
-
-Execute manually with test data before activating. Important:
-- **Real side effects fire during tests** — test emails will actually send, Notion pages will actually be created
-- Use a test Notion database or include `[TEST]` prefix in subject lines during testing
-- Verify output shape matches what downstream nodes expect
-
-### Gate 4: Activate
-
-Only after Gates 1–3 pass. Check:
-- [ ] Schedule trigger timezone is correct (use `America/New_York`, not UTC, for business-hours workflows)
-- [ ] Error workflow is assigned (Workflow Settings → Error Workflow)
-- [ ] Workflow is named clearly: `[SMC] [System] - [Purpose] - [Frequency]`
-
-**Naming convention:**
 ```
-[SMC] Notion - Period Status Sync - Daily
-[SMC] Meridian - Capital Call Processor - On-Demand
-[SMC] Graph - LP Notification Sender - Triggered
+## Workflow: [Name]
+Pattern: [A / B / C / D / E]
+Trigger: [exact trigger config]
+
+### Nodes (in order)
+
+1. [Node Name]
+   Type: [n8n node type]
+   Purpose: [what it does]
+   Key config: [the non-obvious settings]
+
+2. [Node Name]
+   ...
+
+### Connections
+[Node 1] → [Node 2]
+[Node 2] → (True) [Node 3] / (False) [Node 4]
+...
+
+### Error Handling
+[Where retries are configured]
+[Where error outputs are wired]
+[Who gets notified on failure]
+
+### Pre-activation Checklist
+[ ] Credentials configured (not placeholder IDs)
+[ ] Timezone set on trigger
+[ ] Tested with sample data
+[ ] Error workflow assigned in Workflow Settings
+[ ] Workflow named: [suggested name]
 ```
 
 ---
 
-## Section 7: Code Node Patterns
+## Step 4: Generate Importable JSON (On Request)
 
-### Return Format (Non-Negotiable)
+If the user asks for n8n JSON, produce a valid workflow JSON skeleton they can import via **n8n → Workflows → Import from clipboard**.
 
-```javascript
-// ✅ Always return this shape
-return [{ json: { field: value } }];
-
-// ✅ Multiple items
-return items.map(item => ({ json: { ...item.json, processed: true } }));
-
-// ❌ These fail
-return "processed";           // primitive
-return { field: value };      // missing array wrapper
-return null;                  // nothing to wrap
+```json
+{
+  "name": "Workflow Name",
+  "nodes": [
+    {
+      "id": "uuid-placeholder-1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 12 * * 1-5" }]
+        },
+        "timezone": "America/New_York"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Next Node Name", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
 ```
 
-### Execution Mode: Almost Always "Run Once for All Items"
-
-```javascript
-// Run Once for All Items (default — use this)
-const items = $input.all();   // array of all input items
-const first = $input.first(); // first item only
-
-// Run Once for Each Item (25-30x slower — only when truly needed)
-const item = $input.item;     // current item
-```
-
-### Safe Property Access Pattern
-
-```javascript
-// Notion properties can be null — always use optional chaining
-const status = item.json.properties?.["Status"]?.select?.name ?? "Unknown";
-const nav = item.json.properties?.["NAV"]?.number ?? 0;
-const name = item.json.properties?.["Name"]?.title?.[0]?.plain_text ?? "";
-```
-
-### Aggregate and Summarize
-
-```javascript
-// Summarize results across all items for a notification email
-const items = $input.all();
-
-const summary = {
-  total: items.length,
-  succeeded: items.filter(i => i.json.status === "success").length,
-  failed: items.filter(i => i.json.status === "error").length,
-  errors: items
-    .filter(i => i.json.status === "error")
-    .map(i => `${i.json.fund_code}: ${i.json.error_message}`)
-};
-
-return [{ json: summary }];
-```
+**Always tell the user:** Replace `"uuid-placeholder-*"` with real UUIDs before importing. Credentials must be linked manually in the n8n UI after import — never include credential IDs in exported JSON shared outside n8n.
 
 ---
 
-## Common Pitfalls Checklist
+## Built-in Guardrails
 
-Before marking any workflow production-ready:
+Apply these silently when designing — don't lecture unless it's directly relevant:
 
-- [ ] **Webhook data**: accessed via `$json.body.field`, not `$json.field`
-- [ ] **Notion block content**: using HTTP Request node, not native Notion node
-- [ ] **Credential IDs**: real IDs from n8n UI, never placeholder strings
-- [ ] **Email sender**: SMC NoReply via Microsoft Graph, not SMTP
-- [ ] **Error outputs**: all external API nodes have error outputs wired
-- [ ] **Rate limiting**: Notion calls have Wait node (500ms) in loops
-- [ ] **Timezone**: schedule triggers use `America/New_York`, not UTC
-- [ ] **Conditional send**: notifications only fire when there's something to report
-- [ ] **Return format**: Code nodes return `[{ json: {...} }]`
-- [ ] **Test prefix**: `[TEST]` in email subjects during testing
-- [ ] **Naming**: workflow named `[SMC] [System] - [Purpose] - [Frequency]`
-- [ ] **Error workflow**: assigned in Workflow Settings before activation
+**Expressions**
+- Webhook fields: `$json.body.field` not `$json.field`
+- Safe property access: `$json.properties?.["Field"]?.select?.name ?? "default"`
+- Code nodes always return: `[{ json: { ... } }]` — never a string or bare object
+
+**Notion**
+- Native Notion node reads database properties only
+- To read page body/block content: use HTTP Request → `GET /v1/blocks/{id}/children`
+- Always use `Return All: true` or implement cursor pagination for databases > 100 items
+
+**Email (Microsoft Graph)**
+- Endpoint: `POST https://graph.microsoft.com/v1.0/users/{sender}/sendMail`
+- Auth: OAuth2 credential
+- Body content type: `HTML` for formatted output, `Text` for simple alerts
+
+**Error handling (non-negotiable for unattended workflows)**
+- Retry on fail: 3 attempts, 5000ms wait on all external API nodes
+- Wire error outputs on nodes where failure should be caught
+- Assign an error workflow in Workflow Settings before activating
+
+**Validation before activation**
+- No orphaned (disconnected) nodes
+- IF node branches both wired
+- SplitInBatches done-branch connected to post-loop processing
+- Real credential IDs (omit credentials block if ID unknown — add in UI)
+- Test run completed with `[TEST]` prefix on any outbound notifications
+
+---
 
 ## Example Requests
 
 ```
-Build a daily workflow that queries the Notion Period Status database, 
-finds any fund periods marked "Overdue", and sends a summary email 
-to the FinOps team via SMC NoReply.
+I want to build a workflow that runs every morning and checks our Notion 
+deal pipeline for any deals that have been sitting in "Diligence" for 
+more than 14 days without activity. Send me an email summary if any are found.
 ```
 
 ```
-I have a webhook that Meridian calls when a capital call is approved. 
-Build the n8n workflow to receive it, create a Notion log entry, 
-and send a notification email. Show me the error handling too.
+Build a webhook workflow that fires when a fund period is marked complete 
+in our system. It should log the event to Notion and send a confirmation 
+email to the FinOps team.
 ```
 
 ```
-My scheduled workflow is failing silently. Here's the workflow JSON. 
-Review it for missing error handling and Notion expression issues.
+I need to sync records from a Notion database to a PostgreSQL table every night. 
+Only process records that changed since the last run.
 ```
 
 ```
-Write the Code node logic to transform raw Notion database query results 
-into a clean array of LP records for the Meridian upsert.
+Help me build a batch workflow that sends a personalized status email 
+to each item in a list. There are about 40 items. Show me the rate limiting too.
 ```
