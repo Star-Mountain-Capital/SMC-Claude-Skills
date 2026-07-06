@@ -124,6 +124,7 @@ Designed for use with Claude Code in the terminal. Includes code patterns, autom
 
 | Skill Name | Audience | What It Does | Install Command |
 |-----------|----------|-------------|-----------------|
+| **n8n Workflow Builder** | FinOps / Ops / builders | Builds production-grade n8n workflows for SMC's automation stack — Notion (including the HTTP Request node workaround for block content), Microsoft Graph email via SMC NoReply, Meridian PostgreSQL integration, expression syntax, error handling for unattended workflows, and the 4-gate validation lifecycle. | `curl -o ~/.claude/skills/n8n-workflow-builder.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/n8n-workflow-builder.md` |
 | **FinOps Reconciliation** | FinOps team | Builds GL vs. administrator reconciliation scripts, management fee calculators, capital account roll-forwards, and month-end close automation. Adapted from Anthropic's gl-reconciler + month-end-closer cookbooks. | `curl -o ~/.claude/skills/finops-reconciliation.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/finops-reconciliation.md` |
 | **Data Parser** | FinOps / investment | Parses and normalizes financial data files — Excel workbooks, PDF statements, Word documents, and CSVs — into clean structured formats for analysis or downstream processing. | `curl -o ~/.claude/skills/data-parser.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/data-parser.md` |
 | **Notion API Patterns** | FinOps / Meridian team | Provides SMC-specific Notion API patterns for the Meridian FinOps Hub — querying, creating, and updating Notion databases for deal tracking, fund reporting, period status, and LP data. | `curl -o ~/.claude/skills/notion-api-patterns.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/notion-api-patterns.md` |
@@ -199,6 +200,7 @@ For team members building workflows, databases, AI agents, or new Claude Skills.
 curl -o ~/.claude/skills/prd-playbook.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/chat/prd-playbook.md
 curl -o ~/.claude/skills/skill-creator.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/chat/skill-creator.md
 curl -o ~/.claude/skills/notion-api-patterns.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/notion-api-patterns.md
+curl -o ~/.claude/skills/n8n-workflow-builder.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/n8n-workflow-builder.md
 ```
 
 ---
