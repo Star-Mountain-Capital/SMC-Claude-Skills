@@ -144,6 +144,8 @@ Designed for use with Claude Code in the terminal. Includes code patterns, autom
 | **Compliance Monitor** | Compliance / legal / IR | Supports compliance workflows — KYC/AML onboarding reviews, MNPI flagging, regulatory filing deadline tracking, and LP communication disclaimer reviews. All outputs require compliance officer review. | `curl -o ~/.claude/skills/compliance-monitor.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/compliance-monitor.md` |
 | **Session Handoff** | All teams | Produces a structured end-of-session handoff before clearing context — covering decisions made, files changed, running processes, deferred items, and open questions so a fresh agent can continue without losing continuity. Chat output only. | `curl -o ~/.claude/skills/session-handoff.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/session-handoff.md` |
 | **Roast** | All teams | Adversarial idea pressure-testing. Convenes a 5-persona council (Contrarian, Expansionist, Logician, Researcher, Buyer) to attack an idea from every angle, then a Judge delivers one GO / RESHAPE / KILL verdict with the cheapest 48-hour test to de-risk it. | `curl -o ~/.claude/skills/roast.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/roast.md` |
+| **Idea Refine** | All teams | Refines a raw idea (new workflow, automation, tool, or fund initiative) into a sharp one-pager through structured divergent/convergent thinking — expand options, stress-test assumptions, converge on an MVP scope with an explicit "Not Doing" list. | `curl -o ~/.claude/skills/idea-refine.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/idea-refine.md` |
+| **Context Engineering** | FinOps / Meridian team / builders | Guides how to set up and maintain CLAUDE.md rules files and session context for SMC projects (Meridian, reconciliation engines, automations) so Claude Code output stays accurate and follows existing conventions instead of hallucinating endpoints or config structure. | `curl -o ~/.claude/skills/context-engineering.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/context-engineering.md` |
 
 ---
 
@@ -201,6 +203,8 @@ curl -o ~/.claude/skills/prd-playbook.md https://raw.githubusercontent.com/Star-
 curl -o ~/.claude/skills/skill-creator.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/chat/skill-creator.md
 curl -o ~/.claude/skills/notion-api-patterns.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/notion-api-patterns.md
 curl -o ~/.claude/skills/n8n-workflow-builder.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/code/n8n-workflow-builder.md
+curl -o ~/.claude/skills/idea-refine.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/idea-refine.md
+curl -o ~/.claude/skills/context-engineering.md https://raw.githubusercontent.com/Star-Mountain-Capital/Claude-Skills/main/skills/shared/context-engineering.md
 ```
 
 ---
@@ -215,6 +219,7 @@ These skills were curated from public repositories and adapted for SMC's private
 | [anthropics/financial-services](https://github.com/anthropics/financial-services) | `gl-reconciler` + `month-end-closer` → finops-reconciliation; `valuation-reviewer` → valuation-reviewer; `statement-auditor` → lp-statement-auditor; `market-researcher` + `earnings-reviewer` → investment-research; `pitch-agent` → pe-analyst; `meeting-prep-agent` → meeting-intelligence; `kyc-screener` → compliance-monitor |
 | [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | `finance/skills/financial-analyst` → financial-analysis |
 | [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | `meeting-insights-analyzer` → meeting-intelligence |
+| [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) | `idea-refine` → idea-refine; `context-engineering` → context-engineering |
 | SMC original | `lp-memo-writer`, `deal-memo-writer`, `lp-relations`, `deal-screening`, `notion-api-patterns` |
 
 ---
